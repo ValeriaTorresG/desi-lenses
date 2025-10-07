@@ -1,16 +1,49 @@
 import argparse
 from pathlib import Path
-from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import requests
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.table import Table
 
+HSC_SOURCE_URL = "https://www-utap.phys.s.u-tokyo.ac.jp/~oguri/sugohi/download/list_ra_asc_public.csv"
+HSC_CHUNK_SIZE = 1 << 20
 HSC_COLS = ['name','ra','dec','z_lens','z_source','zl_phot','zs_phot',
             'Rein','lens_mag_i','source_mag_i','type','discovery','grade','Reference']
+
+
+def download_hsc_catalog(dest_path, url=HSC_SOURCE_URL, chunk_size=HSC_CHUNK_SIZE):
+    dest = Path(dest_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"----- HSC catalog not found. Downloading from {url}")
+    with requests.get(url, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        total = int(response.headers.get("Content-Length", 0))
+        downloaded = 0
+
+        with dest.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    continue
+                handle.write(chunk)
+                downloaded += len(chunk)
+    if total:
+        print(f"  Downloaded {downloaded} / {total} bytes.")
+    else:
+        print(f"  Downloaded {downloaded} bytes.")
+    print(f"  Saved to {dest.resolve()}")
+    return dest
+
+
+def ensure_hsc_catalog(path):
+    path = Path(path)
+    if path.exists():
+        return path
+    return download_hsc_catalog(path)
 
 
 def load_lens_catalog(path):
@@ -67,17 +100,13 @@ def load_desi_coordinates(path):
         data = hdul[1].data
 
         column_names = set(data.columns.names)
-        coord_required = {"RA", "DEC"}
-        if not coord_required.issubset(column_names):
-            missing_coords = coord_required - column_names
-            raise ValueError(f"Missing coordinates: {', '.join(sorted(missing_coords))}")
 
         missing = [col for col in DESI_COLUMNS if col not in column_names]
         if missing:
             raise ValueError(f"Missing columns in DESI catalog: {', '.join(sorted(missing))}")
 
-        ra = np.array(data["RA"], dtype=np.float64)
-        dec = np.array(data["DEC"], dtype=np.float64)
+        ra = np.array(data["TARGET_RA"], dtype=np.float64)
+        dec = np.array(data["TARGET_DEC"], dtype=np.float64)
 
     coords = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
     return ra, coords
@@ -106,7 +135,7 @@ def parse_args():
     parser.add_argument("--radius-arcsec", type=float,
                         default=6.0) #* ESTE ES EL r DEL PAPER DE https://arxiv.org/abs/2505.16158v2
     parser.add_argument("--output", type=Path,
-                        default=Path("hsc_desi_matches.csv"))
+                        default=Path("/pscratch/sd/v/vtorresg/desi-lenses/hsc_desi_matches.csv"))
     return parser.parse_args()
 
 
@@ -114,8 +143,10 @@ def main():
     args = parse_args()
     radius = args.radius_arcsec * u.arcsec
 
-    print(f"----- Reading HSC catalog {args.hsc_csv}")
-    lens_df, lens_coords = load_lens_catalog(args.hsc_csv)
+    hsc_path = ensure_hsc_catalog(args.hsc_csv)
+
+    print(f"----- Reading HSC catalog {hsc_path}")
+    lens_df, lens_coords = load_lens_catalog(hsc_path)
     print(f"  {len(lens_df)} lenses loaded out of {len(lens_df) + lens_df['RA'].isna().sum()} total entries.")
 
     print(f"----- Getting DESI coords from {args.desi_fits}")
@@ -123,8 +154,28 @@ def main():
     print(f"  {len(desi_coords)} entries in the DESI z cat")
 
     print(f"Searching in r<={radius.to_value(u.arcsec):.2f} arcsec")
-    idx_desi, idx_lens, sep2d, _ = desi_coords.search_around_sky(lens_coords, radius)
+    idx_desi, idx_lens, sep2d, _ = lens_coords.search_around_sky(desi_coords, radius)
+    idx_lens = np.asarray(idx_lens, dtype=np.int64)
+    idx_desi = np.asarray(idx_desi, dtype=np.int64)
+
     print(f"  {len(idx_desi)} found matches for {len(np.unique(idx_lens))} lenses.")
+    if idx_lens.size:
+        print(
+            f"  Lens index stats -> min: {idx_lens.min()}, max: {idx_lens.max()}, len_df: {len(lens_df)}"
+        )
+
+    valid = (idx_lens >= 0) & (idx_lens < len(lens_df))
+    if not np.all(valid):
+        invalid_count = np.count_nonzero(~valid)
+        invalid_min = idx_lens[~valid].min()
+        invalid_max = idx_lens[~valid].max()
+        print(
+            f"  WARNING: filtered {invalid_count} match(es) with invalid lens indices "
+            f"(min {invalid_min}, max {invalid_max})."
+        )
+        idx_lens = idx_lens[valid]
+        idx_desi = idx_desi[valid]
+        sep2d = sep2d[valid]
 
     print("----- Getting matched rows and saving")
     desi_matches_df = gather_desi_rows(args.desi_fits, idx_desi)
