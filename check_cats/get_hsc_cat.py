@@ -160,19 +160,15 @@ def main():
 
     print(f"  {len(idx_desi)} found matches for {len(np.unique(idx_lens))} lenses.")
     if idx_lens.size:
-        print(
-            f"  Lens index stats -> min: {idx_lens.min()}, max: {idx_lens.max()}, len_df: {len(lens_df)}"
-        )
+        print(f"  Lens index stats -> min: {idx_lens.min()}, max: {idx_lens.max()}, len_df: {len(lens_df)}")
 
     valid = (idx_lens >= 0) & (idx_lens < len(lens_df))
     if not np.all(valid):
         invalid_count = np.count_nonzero(~valid)
         invalid_min = idx_lens[~valid].min()
         invalid_max = idx_lens[~valid].max()
-        print(
-            f"  WARNING: filtered {invalid_count} match(es) with invalid lens indices "
-            f"(min {invalid_min}, max {invalid_max})."
-        )
+        print(f"  WARNING: filtered {invalid_count} match(es) with invalid lens indices "
+              f"(min {invalid_min}, max {invalid_max}).")
         idx_lens = idx_lens[valid]
         idx_desi = idx_desi[valid]
         sep2d = sep2d[valid]

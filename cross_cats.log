@@ -1,9 +1,0 @@
------ Reading HSC catalog /pscratch/sd/v/vtorresg/desi-lenses/hsc_full_catalog.csv
-  3961 lenses loaded out of 3961 total entries.
------ Getting DESI coords from /global/cfs/cdirs/desi/public/dr1/spectro/redux/iron/zcatalog/v1/zall-pix-iron.fits
-  28425963 entries in the DESI z cat
-Searching in r<=6.00 arcsec
-  3450 found matches for 2121 lenses.
-  Lens index stats -> min: 2, max: 3956, len_df: 3961
------ Getting matched rows and saving
------ Saved in /pscratch/sd/v/vtorresg/desi-lenses/hsc_desi_matches.csv
